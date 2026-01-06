@@ -2,6 +2,8 @@ import { DocumentList } from "@/components/dashboard/DocumentList";
 import { DocumentUpload } from "@/components/dashboard/DocumentUpload";
 import { Button } from "@/components/ui/button";
 import { FileUp } from "lucide-react";
+import { Suspense } from "react";
+import { DocumentListSkeleton } from "@/components/dashboard/DocumentListSkeleton";
 
 export default function DashboardPage() {
   return (
@@ -18,7 +20,9 @@ export default function DashboardPage() {
           </Button>
         </DocumentUpload>
       </div>
-      <DocumentList />
+      <Suspense fallback={<DocumentListSkeleton />}>
+        <DocumentList />
+      </Suspense>
     </div>
   );
 }

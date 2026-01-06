@@ -1,13 +1,16 @@
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { RegisterForm } from "@/components/auth/RegisterForm";
+import { UnauthGuard } from "@/components/auth/UnauthGuard";
 
 export default function RegisterPage() {
   return (
-    <AuthLayout
-      title="Create an Account"
-      subtitle="Join VaultLock today"
-    >
-      <RegisterForm />
-    </AuthLayout>
+    <UnauthGuard>
+      <AuthLayout
+        title="Create an Account"
+        subtitle="Join VaultLock today"
+      >
+        <RegisterForm />
+      </AuthLayout>
+    </UnauthGuard>
   );
 }

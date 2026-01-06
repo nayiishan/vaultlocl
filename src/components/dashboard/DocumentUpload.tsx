@@ -15,8 +15,12 @@ import { Input } from "@/components/ui/input";
 import { toast } from "@/hooks/use-toast";
 import { UploadCloud } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { useFirebase, addDocumentNonBlocking } from "@/firebase";
+import { getStorage, ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { collection, serverTimestamp } from "firebase/firestore";
 
 export function DocumentUpload({ children }: { children: ReactNode }) {
+  const { user, firestore } = useFirebase();
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -28,11 +32,18 @@ export function DocumentUpload({ children }: { children: ReactNode }) {
     }
   };
 
+  const resetState = () => {
+    setFile(null);
+    setIsUploading(false);
+    setUploadProgress(0);
+    setOpen(false);
+  };
+
   const handleUpload = async () => {
-    if (!file) {
+    if (!file || !user) {
       toast({
-        title: "No file selected",
-        description: "Please select a file to upload.",
+        title: "Error",
+        description: !file ? "No file selected." : "You must be logged in to upload.",
         variant: "destructive",
       });
       return;
@@ -41,36 +52,66 @@ export function DocumentUpload({ children }: { children: ReactNode }) {
     setIsUploading(true);
     setUploadProgress(0);
 
-    const progressInterval = setInterval(() => {
-        setUploadProgress(prev => {
-            if (prev >= 95) {
-                clearInterval(progressInterval);
-                return prev;
-            }
-            return prev + 5;
+    const storage = getStorage();
+    const storagePath = `users/${user.uid}/documents/${Date.now()}_${file.name}`;
+    const storageRef = ref(storage, storagePath);
+    const uploadTask = uploadBytesResumable(storageRef, file);
+
+    uploadTask.on('state_changed',
+      (snapshot) => {
+        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+        setUploadProgress(progress);
+      },
+      (error) => {
+        console.error("Upload Error:", error);
+        toast({
+          title: "Upload Failed",
+          description: "There was an error uploading your file. Please try again.",
+          variant: "destructive",
         });
-    }, 100);
-
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    clearInterval(progressInterval);
-    setUploadProgress(100);
-
-    toast({
-      title: "Upload Successful",
-      description: `"${file.name}" has been uploaded.`,
-    });
-    
-    setTimeout(() => {
         setIsUploading(false);
-        setFile(null);
-        setOpen(false);
-        setUploadProgress(0);
-    }, 500);
+      },
+      async () => {
+        try {
+          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+
+          const docData = {
+            fileName: file.name,
+            fileSize: file.size,
+            fileType: file.type || 'unknown',
+            downloadURL: downloadURL,
+            storagePath: storagePath,
+            uploadDate: serverTimestamp(),
+            userId: user.uid,
+          };
+          
+          const docsCollectionRef = collection(firestore, "users", user.uid, "documents");
+          await addDocumentNonBlocking(docsCollectionRef, docData);
+
+          toast({
+            title: "Upload Successful",
+            description: `"${file.name}" has been uploaded.`,
+          });
+
+          setTimeout(() => {
+            resetState();
+          }, 500);
+
+        } catch (error) {
+            console.error("Error saving document metadata:", error);
+             toast({
+                title: "Error",
+                description: "File uploaded, but failed to save document details.",
+                variant: "destructive",
+            });
+            setIsUploading(false);
+        }
+      }
+    );
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!isUploading) setOpen(o); }}>
+    <Dialog open={open} onOpenChange={(o) => { if (!isUploading) setOpen(o); if (!o) resetState(); }}>
       <DialogTrigger asChild>{children}</DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
@@ -99,7 +140,7 @@ export function DocumentUpload({ children }: { children: ReactNode }) {
             )}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => { setOpen(false); setFile(null); }} disabled={isUploading}>Cancel</Button>
+          <Button variant="outline" onClick={resetState} disabled={isUploading}>Cancel</Button>
           <Button onClick={handleUpload} disabled={isUploading || !file}>
             {isUploading ? "Uploading..." : "Upload"}
           </Button>
