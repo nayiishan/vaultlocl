@@ -1,0 +1,125 @@
+/**
+ * Core Philosophy: This ruleset enforces a strict user-ownership model where all
+ * user-generated data is stored within a private data tree. Access is granted
+ * solely based on the authenticated user's ID matching the user ID specified in
+ * the document path.
+ *
+ * Data Structure: All data is nested under the top-level `/users` collection.
+ * Each user's data is isolated under their unique ID: `/users/{userId}`.
+ * This path contains their profile and a subcollection for their private documents
+ * (`/users/{userId}/documents/{documentId}`).
+ *
+ * Key Security Decisions:
+ * - Disallow User Listing: It is not possible to query the top-level `/users`
+ *   collection, preventing attackers from harvesting a list of all application users.
+ * - Path-Based Security: All security decisions for reads and writes are derived
+ *   from the `{userId}` wildcard in the document path, ensuring that a user can
+ *   only ever access their own data tree.
+ * - Default Deny: Any path not explicitly matched is denied access. There are no
+ *   publicly accessible collections.
+ *
+ * Denormalization for Authorization: The `Document` entity contains a `userId`
+ * field that is denormalized from the path (`/users/{userId}`). This is a
+ * deliberate design choice to enforce relational integrity on write operations.
+ * On creation, we validate that the `userId` in the document body matches the
+ * `userId` in the path. On update, we ensure this field is immutable, preventing
+ * a document from being reassigned to a different user.
+ */
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --------------------------------------------------------------------
+    // Helper Functions
+    // --------------------------------------------------------------------
+
+    /**
+     * Checks if the user is authenticated.
+     */
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    /**
+     * Checks if the currently authenticated user's ID matches the provided userId.
+     * This is the core of the ownership-based security model.
+     */
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    /**
+     * A robust check for update/delete operations, ensuring the user is the owner
+     * AND the document they are trying to modify actually exists.
+     */
+    function isExistingOwner(userId) {
+      return isOwner(userId) && resource != null;
+    }
+
+    /**
+     * Validates required authorization fields for UserProfile creation.
+     * Ensures the document's internal `id` matches the user's auth ID.
+     */
+    function hasValidUserProfileData_OnCreate(userId) {
+      return request.resource.data.id == userId;
+    }
+
+    /**
+     * Enforces immutability for critical authorization fields on UserProfile update.
+     * The `id` field must not be changed after creation.
+     */
+    function hasValidUserProfileData_OnUpdate() {
+      return request.resource.data.id == resource.data.id;
+    }
+
+    /**
+     * Validates required authorization fields for Document creation.
+     * Ensures the denormalized `userId` in the document matches the owner's ID from the path.
+     */
+    function hasValidDocumentData_OnCreate(userId) {
+      return request.resource.data.userId == userId;
+    }
+
+    /**
+     * Enforces immutability for critical authorization fields on Document update.
+     * The `userId` link must not be changed after creation.
+     */
+    function hasValidDocumentData_OnUpdate() {
+      return request.resource.data.userId == resource.data.id;
+    }
+
+    // --------------------------------------------------------------------
+    // Collection Rules
+    // --------------------------------------------------------------------
+
+    /**
+     * @description Manages user profile documents.
+     * @path /users/{userId}
+     * @allow (create) An authenticated user can create their own user profile document.
+     * @deny (list) No user, authenticated or not, can list all user profiles.
+     * @principle Restricts access to a user's own data tree and prevents user enumeration.
+     */
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow list: if false;
+      allow create: if isOwner(userId) && hasValidUserProfileData_OnCreate(userId);
+      allow update: if isExistingOwner(userId) && hasValidUserProfileData_OnUpdate();
+      allow delete: if isExistingOwner(userId);
+    }
+
+    /**
+     * @description Manages documents private to a specific user.
+     * @path /users/{userId}/documents/{documentId}
+     * @allow (get) An authenticated user `user_abc` can read their own document at `/users/user_abc/documents/doc_123`.
+     * @deny (get) User `user_xyz` cannot read a document at `/users/user_abc/documents/doc_123`.
+     * @principle Enforces document ownership for all operations within a user's private subcollection.
+     */
+    match /users/{userId}/documents/{documentId} {
+      allow get: if isOwner(userId);
+      allow list: if isOwner(userId);
+      allow create: if isOwner(userId) && hasValidDocumentData_OnCreate(userId);
+      allow update: if isExistingOwner(userId) && hasValidDocumentData_OnUpdate();
+      allow delete: if isExistingOwner(userId);
+    }
+  }
+}

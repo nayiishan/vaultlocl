@@ -1,0 +1,108 @@
+{
+  "entities": {
+    "UserProfile": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "UserProfile",
+      "type": "object",
+      "description": "Represents a user profile in the VaultLock application.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the user profile."
+        },
+        "email": {
+          "type": "string",
+          "description": "Email address of the user.",
+          "format": "email"
+        }
+      },
+      "required": [
+        "id",
+        "email"
+      ]
+    },
+    "Document": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Document",
+      "type": "object",
+      "description": "Represents a document uploaded by a user.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the document."
+        },
+        "userId": {
+          "type": "string",
+          "description": "Reference to UserProfile. (Relationship: UserProfile 1:N Document)"
+        },
+        "fileName": {
+          "type": "string",
+          "description": "Name of the document file."
+        },
+        "uploadDate": {
+          "type": "string",
+          "description": "Date and time when the document was uploaded.",
+          "format": "date-time"
+        },
+        "fileSize": {
+          "type": "number",
+          "description": "The size in bytes of this document file."
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "fileName",
+        "uploadDate",
+        "fileSize"
+      ]
+    }
+  },
+  "auth": {
+    "providers": [
+      "password",
+      "anonymous"
+    ]
+  },
+  "firestore": {
+    "structure": [
+      {
+        "path": "/users/{userId}",
+        "definition": {
+          "entityName": "UserProfile",
+          "schema": {
+            "$ref": "#/backend/entities/UserProfile"
+          },
+          "description": "Stores user profile information. Path-based ownership ensures that only the user can access their profile data.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique identifier of the user."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/users/{userId}/documents/{documentId}",
+        "definition": {
+          "entityName": "Document",
+          "schema": {
+            "$ref": "#/backend/entities/Document"
+          },
+          "description": "Stores documents uploaded by the user. Includes denormalized 'userId' for authorization independence. This enables direct security rule checks against request.auth.uid without additional database reads.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique identifier of the user who owns the document."
+            },
+            {
+              "name": "documentId",
+              "description": "The unique identifier of the document."
+            }
+          ]
+        }
+      }
+    ],
+    "reasoning": "The Firestore data structure is designed to ensure secure and scalable document management for VaultLock. We leverage path-based ownership for user profiles and documents to simplify security rules and maintain data integrity.\n\n1.  **User Profiles:** User profiles are stored in the `/users/{userId}` collection, ensuring that each user's data is isolated and directly accessible using their `userId`. This structure aligns with the principle of path-based ownership.\n\n2.  **Documents:** Documents are stored in a subcollection `/users/{userId}/documents/{documentId}`, establishing a clear ownership hierarchy. Each document's `userId` field is redundant but critical for authorization independence. Security rules can directly verify the user's ID against the document's `userId` without needing to perform additional `get()` operations. This denormalization is a key design principle for VaultLock.\n\nThis structure facilitates simple and robust security rules. For example, a rule to allow a user to read their own documents would be straightforward:\n\n```\nmatch /users/{userId}/documents/{documentId} {\n  allow read: if request.auth.uid == userId;\n}\n```\n\nThis design ensures that the system can scale efficiently and maintain data integrity as the number of users and documents grows."
+  }
+}
